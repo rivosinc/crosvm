@@ -879,6 +879,7 @@ impl arch::LinuxArch for X8664arch {
             #[cfg(unix)]
             platform_devices: Vec::new(),
             hotplug_bus: BTreeMap::new(),
+            fdt_address: None,
         })
     }
 
