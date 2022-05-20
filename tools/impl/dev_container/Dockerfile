@@ -1,8 +1,7 @@
 # Copyright 2021 The Chromium OS Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-ARG RUST_VERSION
-FROM docker.io/rust:${RUST_VERSION}-slim-bullseye
+FROM debian:unstable
 
 # Use a dedicated target directory so we do not write into the source directory.
 RUN mkdir -p /scratch/cargo_target \
@@ -12,24 +11,41 @@ RUN mkdir -p /scratch/cargo_target \
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV CARGO_TARGET_DIR=/scratch/cargo_target
 
-# Add foreign architectures for cross-compilation.
-RUN dpkg --add-architecture arm64 \
-    && dpkg --add-architecture armhf
+
+# rust toolchain setup taken from rust crate
+# duplicated here so riscv64 support can be used from debian unstable
+ARG RUST_VERSION
+
+ENV RUSTUP_HOME=/usr/local/rustup \
+    RUST_ARCH=x86_64-unknown-linux-gnu \
+    RUSTUP_VERSION=1.25.1 \
+    CARGO_HOME=/usr/local/cargo \
+    rust_version=$RUST_VERSION \
+    PATH=/usr/local/cargo/bin:$PATH
+
+RUN set -eux; \
+    url="https://static.rust-lang.org/rustup/archive/$RUSTUP_VERSION/$RUST_ARCH/rustup-init"; \
+    wget -q "$url"; \
+    chmod +x rustup-init;
+RUN ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host $RUST_ARCH;
+RUN rm rustup-init;
+RUN chmod -R a+w $RUSTUP_HOME $CARGO_HOME;
 
 # Install dependencies.
-COPY tools/install-deps tools/install-aarch64-deps tools/install-armhf-deps tools/install-docs-deps /tools/
+COPY tools/install-deps tools/install-aarch64-deps tools/install-armhf-deps tools/install-riscv64-deps tools/install-docs-deps /tools/
 RUN chmod 755 /tools/install-deps /tools/install-aarch64-deps /tools/install-armhf-deps /tools/install-docs-deps \
     && apt update \
     && apt install --yes sudo \
+    && apt-get install --yes debian-ports-archive-keyring \
     && /tools/install-deps \
     && /tools/install-aarch64-deps \
     && /tools/install-armhf-deps \
+    && /tools/install-riscv64-deps \
     && /tools/install-docs-deps \
     # Clear apt cache to save space in layer.
     && rm -rf /var/lib/apt/lists/* \
     # Delete build artifacts from 'cargo install' to save space in layer.
     && rm -rf /scratch/cargo_target/*
-
 # Add a new password-less sudoer user crosvmdev
 RUN useradd -ms /bin/bash crosvmdev \
     && usermod -aG sudo crosvmdev \
@@ -51,10 +67,12 @@ RUN sudo ln -sf /usr/bin/wine64-stable /usr/bin/wine64 \
 
 # Prebuild aarch64 VM image for faster startup.
 COPY tools/aarch64vm /tools/
+COPY tools/riscv64vm /tools/
 COPY /tools/impl/testvm.py /tools/impl/
 COPY /tools/impl/testvm/version /tools/impl/testvm/
 RUN sudo chmod 755 /tools/aarch64vm /tools/impl/testvm.py \
     && /tools/aarch64vm build
+    && /tools/riscv64vm build
 
 # Cache CARGO_HOME between container runs in CI.
 VOLUME /cache
